@@ -1,0 +1,230 @@
+% Written for the DLV datalog engine
+#maxint=256.
+
+% Airlines
+airline("Norwegian").
+airline("Delta Air Lines").
+airline("SAS").
+airline("Air Canada").
+airline("KLM").
+
+% Countries
+country("Denmark").
+country("USA").
+country("The Netherlands").
+country("Iran").
+country("Iraq").
+
+% Weather types
+weather(cloudy).
+weather(clear).
+weather(windy).
+weather(thunderstorms).
+
+% Airports
+airport("AAL", "Aalborg Airport", "Aalborg", "Denmark", cloudy).
+airport("CPH", "Copenhagen Airport", "Copenhagen", "Denmark", clear).
+airport("BLL", "Billund Airport", "Billund", "Denmark", thunderstorms).
+airport("AMS", "Amsterdam Airport Schiphol", "Amsterdam", "The Netherlands", clear).
+airport("EWR", "Newark Liberty International Airport", "New Jersey City", "USA", clear).
+airport("YYZ", "Toronto Pearson Airport", "Toronto", "Canada", windy).
+
+% Flight seat columns. As written in the documentation, it is assumed that the planes in this model have a fixed amount of columns
+seatColumn("A", window).
+seatColumn("B", middle).
+seatColumn("C", aisle).
+seatColumn("D", aisle).
+seatColumn("E", middle).
+seatColumn("F", window).
+
+% Define the adjacency of seat columns - symmetry is defined in a rule
+adjacentTo("A", "B").
+adjacentTo("B", "C").
+adjacentTo("D", "E").
+adjacentTo("E", "F").
+
+% Aircraft. All aircraft have a registration code, a model, a make, a type and a number of seat rows
+% In addition, all aircraft have an operator, although other airlines can user their aircraft
+aircraft("G-EZRY", "737", "Boeing", "Norwegian", light, 33).
+aircraft("OY-JJO", "A380", "Airbus", "Delta Air Lines", heavy, 53).
+aircraft("N16976", "777", "Boeing", "Air Canada", light, 15).
+
+% Seat classes can be modelled in [ranges], such as in the example provided below
+seatClass(business, "G-EZRY", 1, 10).
+seatClass(economy, "G-EZRY", 11, 53).
+
+% Passengers. In addition to the requested details, I have supplied passengers with a unique identifier
+passenger("010170XXXX", "John", "Doe", "01-01-1970").
+passenger("010195XXXX", "Richard", "Roe", "01-01-1995").
+
+% Passports belonging to passengers
+passport("010170XXXX", "Denmark").
+passport("010195XXXX", "Denmark").
+passport("010195XXXX", "Iraq").
+
+% Visa agreements. I assume that these are not bi-directional, so A->B does not imply B->A.
+visaAgreement("Denmark", "USA").
+visaAgreement("Denmark", "Canada").
+visaAgreement("USA", "Denmark").
+
+% Flight legs. Notice that airline does not necessarily correspond to the operator of the aircraft
+flightLeg("AAL", "AMS", "G-EZRY", "KLM").
+flightLeg("CPH", "EWR", "OY-JJO", "SAS").
+flightLeg("AAL", "CPH", "G-EZRY", "Norwegian").
+flightLeg("EWR", "YYZ", "N16976", "SAS").
+
+% Citizens of certain countries are blacklisted from entering certain countries
+% For example, passports from Iran and Iraq are blacklisted from USA in these examples
+blacklist("Iran", "USA").
+blacklist("Iraq", "USA").
+blacklist("Iraq", "Canada").
+
+% Booking reservations
+reservation("8V32EU", "010170XXXX", 27, "B", "CPH", "EWR", "SAS").
+reservation("1K59US", "010170XXXX", 14, "F", "EWR", "YYZ", "United Express").
+reservation("9A18VE", "010195XXXX", 27, "A", "CPH", "EWR", "SAS").
+
+% Itinearies. Each itinerary has a unique identifier and is associated with a number of reservations
+itinerary("IT1", "8V32EU").
+itinerary("IT1", "1K59US").
+itinerary("IT2", "9A18VE").
+
+% In addition to the extensional visa agreements, a passenger can fly to his or her own country
+visaAgreement(A, B) :- country(A), country(B), A == B.
+
+% Adjacency of columns is symmetric, which is defined in the rule below
+adjacentTo(A, B) :- adjacentTo(B, A).
+
+% Two seats are adjacent if they are on the same row and the column is adjacent
+seatAdjacent(RowA, ColumnA, RowB, ColumnB) :-
+  #int(RowA), #int(RowB),
+  RowA == RowB,
+  seatColumn(ColumnA, _), seatColumn(ColumnB, _),
+  adjacentTo(ColumnA, ColumnB).
+
+% Auxiliary rules to define which flight types can fly in which weather
+canOperateIn(heavy, Weather) :-
+  weather(Weather),
+  Weather != thunderstorms.
+
+canOperateIn(light, Weather) :-
+  weather(Weather),
+  Weather != windy,
+  Weather != thunderstorms.
+
+% Problem 3: Compute the airports a passenger may fly into. Does not consider blacklists
+canTravelTo(PassengerId, IATA) :-
+  passenger(PassengerId, _, _, _),
+  airport(IATA, _, _, AirportCountry, _),
+  passport(PassengerId, PassportCountry),
+  visaAgreement(PassportCountry, AirportCountry).
+
+% Problem 4: Compute the passengers that have illegal reservations
+illegalReservation(PassengerId, OriginIATA, DestinationIATA, Airline) :-
+  reservation(_, PassengerId, _, _, OriginIATA, DestinationIATA, Airline),
+  not canTravelTo(PassengerId, DestinationIATA).
+
+% An auxiliary rule to help determine whether a flight leg has illegal reservations
+illegalReservations(OriginIATA, DestinationIATA, Airline) :-
+  illegalReservation(_, OriginIATA, DestinationIATA, Airline).
+
+% Problem 5: Compute the booking code of all double bookings
+% Not regarded as a double booking if the person is the same
+doublebooking(BookingCode, OriginIATA, DestinationIATA, Airline) :-
+  reservation(BookingCode, FirstPerson, SeatRow, SeatCol, OriginIATA, DestinationIATA, Airline),
+  reservation(SecondCode, SecondPerson, SeatRow, SeatCol, OriginIATA, DestinationIATA, Airline),
+  passenger(FirstPerson, _, _, _),
+  passenger(SecondPerson, _, _, _),
+  FirstPerson != SecondPerson,
+  BookingCode != SecondCode.
+
+% An auxiliary rule to help determine whether a flight leg has doublebookings, disregarding the booking code
+doublebookings(OriginIATA, DestinationIATA, Airline) :-
+  reservation(BookingCode, _, _, _, OriginIATA, DestinationIATA, Airline),
+  doublebooking(BookingCode, OriginIATA, DestinationIATA, Airline).
+
+% Problem 6: Compute the aircrafts that are permitted to takeoff
+clearedForTakeoff(AircraftRegistration, OriginIATA, DestinationIATA) :-
+  aircraft(AircraftRegistration, _, _, _, AircraftType, _),
+  flightLeg(OriginIATA, DestinationIATA, AircraftRegistration, Airline),
+  airport(OriginIATA, _, _, _, OriginWeather),
+  airport(DestinationIATA, _, _, _, DestinationWeather),
+  canOperateIn(AircraftType, OriginWeather),
+  canOperateIn(AircraftType, DestinationWeather),
+  not doublebookings(OriginIATA, DestinationIATA, Airline),
+  not illegalReservations(OriginIATA, DestinationIATA, Airline).
+
+% Problem 7: Compute the airports that are closed
+canOperateInAirport(AircraftRegistration, IATA) :-
+  aircraft(AircraftRegistration, _, _, _, AircraftType, _),
+  airport(IATA, _, _, _, Weather),
+  canOperateIn(AircraftType, Weather).
+
+canLandIn(IATA) :-
+  flightLeg(_, IATA, AircraftRegistration, _),
+  canOperateInAirport(AircraftRegistration, IATA).
+
+canTakeoffFrom(IATA) :-
+  flightLeg(IATA, _, AircraftRegistration, _),
+  canOperateInAirport(AircraftRegistration, IATA).
+
+% An airport "has flights" if there are in- or outbound flight legs
+hasFlights(IATA) :-
+  flightLeg(IATA, _, _, _).
+
+hasFlights(IATA) :-
+  flightLeg(_, IATA, _, _).
+
+airportClosed(IATA) :-
+  hasFlights(IATA),
+  not canLandIn(IATA),
+  not canTakeoffFrom(IATA).
+
+% Problem 8: Compute if a passenger can book a flight from one airport to another. Determining whether a seat is valid depends on the aircraft
+validSeat(Row, Column, AircraftRegistration) :-
+  aircraft(AircraftRegistration, _, _, _, _, AircraftRows),
+  #int(AircraftRows), #int(Row),
+  seatColumn(Column, Any),
+  Row >= 1, Row <= AircraftRows.
+
+% Determining whether a seat is taken is to simply check if there is an existing reservation
+seatTaken(Row, Column, OriginIATA, DestinationIATA, Airline) :-
+  reservation(_, _, Row, Column, OriginIATA, DestinationIATA, Airline).
+
+% For a seat to be available, the seat needs to be available and to not be taken
+seatAvailable(Row, Column, OriginIATA, DestinationIATA, Airline) :-
+  flightLeg(OriginIATA, DestinationIATA, AircraftRegistration, Airline),
+  aircraft(AircraftRegistration, _, _, _, _, _),
+  validSeat(Row, Column, AircraftRegistration),
+  flightLeg(OriginIATA, DestinationIATA, _, Airline),
+  not seatTaken(Row, Column, OriginIATA, DestinationIATA, Airline).
+
+% The base case is that a passenger can fly from A to B if a seat is available on that flight
+canBook(Passenger, OriginIATA, DestinationIATA) :-
+  canTravelToNew(Passenger, DestinationIATA),
+  seatAvailable(_, _, OriginIATA, DestinationIATA, _).
+
+% In the layover case, the passenger can book a flight from A to B and then from B to C
+canBook(Passenger, OriginIATA, DestinationIATA) :-
+  canBook(Passenger, OriginIATA, LayoverIATA),
+  canBook(Passenger, LayoverIATA, DestinationIATA).
+
+% Problem 9: Compute the airports a passenger may fly into taking dual citizenship and blacklists into account
+% An extension on the previous canTravelTo, althougn now a passenger is not allowed if they have a prohibited passport
+canTravelToNew(PassengerId, IATA) :-
+  canTravelTo(PassengerId, IATA),
+  airport(IATA, _, _, AirportCountry, _),
+  not prohibitedFromCountry(PassengerId, AirportCountry).
+
+prohibitedFromCountry(PassengerId, Country) :-
+  passport(PassengerId, PassportCountry),
+  blacklist(PassportCountry, Country).
+
+% Tests
+%canTravelTo(_, _)?
+%illegalReservation(_, _, _, _)? 
+%doublebooking(_, _, _, _)?
+%clearedForTakeoff(_, _, _)?
+%airportClosed(_)?
+%canBook("010170XXXX", "AAL", "YYZ")?
+%canTravelToNew("010195XXXX", "EWR")?
